@@ -1,0 +1,24 @@
+RawData/*
+ProcessedData/*
+REFACTORING_PLAN.md
+**/darts_logs
+**/.DS_Store
+*.pkl
+*.pkl.ckpt
+*_artifacts/
+*.pyc
+.venv/
+DartsCheck/
+**/*.xlsx
+**/*.xls
+**/*.png
+**/artifact_store
+**/ExtraPlots/**
+Copilot.md
+**.zip
+**/.ipynb_checkpoints
+**/*.csv.gz
+**/Checkpoints/**
+**.gpkg
+**/climate_2025.csv
+**/Other\ Data/**
