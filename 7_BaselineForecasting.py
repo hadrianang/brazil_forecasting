@@ -18,7 +18,8 @@ from optuna.storages import JournalStorage
 from optuna.storages.journal import JournalFileBackend
 from darts.models import (
     LinearRegressionModel,
-    Prophet
+    Prophet,
+    TFTModel,
 )
 from darts.utils.likelihood_models import GaussianLikelihood, PoissonLikelihood, QuantileRegression
 import matplotlib.pyplot as plt
@@ -36,7 +37,6 @@ quantiles = [0.01, 0.025, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0
 gpu_id = 0
 tuning_name = "Tuning_30_07_2025" #Name of the tuning scenario to use
 random_seed = 20
-
 #%%
 #1. Reading Data and Setup ----
 base_dir = os.getcwd()
@@ -455,8 +455,15 @@ clim_hold_targ4_log_s = hp.ts_list_concatenate([clim_hold4_log_s, clim_preds_tar
 # Grouping series into sets for easier handling
 
 train = [train1, train2, train3]
-train_log = [train1_log, train2_log, train3_log]
-train_log_s = [train1_log_sc_s, train2_log_sc_s, train3_log_sc_s]
+train_log_sc = [train1_log_sc, train2_log_sc, train3_log_sc]
+train_log_sc_s = [train1_log_sc_s, train2_log_sc_s, train3_log_sc_s]
+
+gap_log = [gap1_log, gap2_log, gap3_log]
+gap_log_s = [gap1_log_s, gap2_log_s, gap3_log_s]
+
+val = [val1, val2, val3]
+val_log = [val1_log, val2_log, val3_log]
+val_log_s = [val1_log_s, val2_log_s, val3_log_s]
 
 hold = [hold1, hold2, hold3]
 hold_log_sc = [hold1_log_sc, hold2_log_sc, hold3_log_sc]
@@ -466,6 +473,7 @@ targ = [targ1, targ2, targ3]
 targ_log = [targ1_log, targ2_log, targ3_log]
 targ_log_s = [targ1_log_s, targ2_log_s, targ3_log_s]
 
+clim_train_val_log_s = [clim_train_val1_log_s, clim_train_val2_log_s, clim_train_val3_log_s]
 clim_hold_targ_log_s = [clim_hold_targ1_log_s, clim_hold_targ2_log_s, clim_hold_targ3_log_s]
 #%%
 # 3. Modelling ----
@@ -589,7 +597,6 @@ storage = JournalStorage(
 )
 opt_study = optuna.load_study(study_name = den_tuning_config["StudyName"], storage = storage)
 best_params = opt_study.best_params
-best_params
 
 #%%
 # 3.2 Building Models ----
@@ -606,6 +613,46 @@ best_params
 
 num_models = 3
 
+#Function to build TFT models with the given hyperparameters
+def build_tft_model(model_name, batch_size, input_chunk_length, output_chunk_length, hidden_size, hidden_continuous_size, lstm_layers, num_attention_heads, dropout, learning_rate, output_chunk_shift = 0, force_reset = True, progress_bars = True):
+    torch.manual_seed(random_seed)
+    curr_encoders = {"datetime_attribute": {"future": ["month", "year"]}, 
+                    "transformer": Scaler()}
+    early_stopper = EarlyStopping("val_loss", min_delta = 0.0001, patience = 8)
+    pl_trainer_kwargs = {"accelerator": accel,
+                             "devices": [gpu_id],
+                             "callbacks": [early_stopper]}
+
+    if not progress_bars:
+        pl_trainer_kwargs["enable_progress_bar"] = False
+
+    curr_model = TFTModel(
+        model_name = model_name,
+        batch_size = batch_size,
+        input_chunk_length = input_chunk_length,
+        output_chunk_length = output_chunk_length,
+        output_chunk_shift = output_chunk_shift,
+        hidden_size = hidden_size,
+        hidden_continuous_size = hidden_continuous_size,
+        lstm_layers = lstm_layers,
+        num_attention_heads = num_attention_heads,
+        dropout = dropout,
+        n_epochs = 100,
+        add_encoders = curr_encoders,
+        likelihood = QuantileRegression(quantiles = quantiles), 
+        optimizer_kwargs = {"lr": learning_rate},
+        pl_trainer_kwargs = pl_trainer_kwargs,
+        show_warnings = True,
+        save_checkpoints = True,
+        use_static_covariates = True,
+        force_reset = force_reset,
+        random_state = random_seed
+    )
+    return curr_model
+
+
+#%%
+#Here we build the models -- we try with maximum data (training on hold)
 #LR with fixed lag = 52
 lr_models = [LinearRegressionModel(lags = 52, lags_future_covariates = (52,1),
  add_encoders = {"datetime_attribute": {"future": ["month", "year"]}, 
@@ -614,19 +661,41 @@ proph_models = [[Prophet(random_state = random_seed, add_encoders = {"datetime_a
                     "transformer": Scaler()}) for j in range(len(uf_list))] for i in range(num_models)] #Prophet is local only, so one has to be created per uf
 seas_avg_models = [NaiveSeasonalWeeklyForecaster(calendar = weekly_cal) for i in range(num_models)] #This behaves like a global model - but internally acts local
 
+#But as sensitivity analysis, we create a version training on just train -- the same data used by the TFT 
+lr_models_sens = [LinearRegressionModel(lags = 52, lags_future_covariates = (52,1),
+ add_encoders = {"datetime_attribute": {"future": ["month", "year"]}, 
+                    "transformer": Scaler()}) for i in range(num_models)]
+proph_models_sens = [[Prophet(random_state = random_seed, add_encoders = {"datetime_attribute": {"future": ["month", "year"]}, 
+                    "transformer": Scaler()}) for j in range(len(uf_list))] for i in range(num_models)] #Prophet is local only, so one has to be created per uf
+seas_avg_models_sens = [NaiveSeasonalWeeklyForecaster(calendar = weekly_cal) for i in range(num_models)] #This behaves like a global model - but internally acts local
 
 #%%
-# 3.3 Fitting Models ----
+#We also build TFTs training from scratch as global models 
+#For this, we load the best hyperparameters -- same as those used in the main forecast
 
-#First, we fit LinearRegression as global models
+tft_models_sens = []
+for i in range(num_models):
+    curr_model = build_tft_model(model_name = "TFT_Sens" + str(i), 
+                                 batch_size = best_params["batch_size"], 
+                                 input_chunk_length = best_params["input_chunk_length"], 
+                                 output_chunk_length = best_params["output_chunk_length"], 
+                                 hidden_size = best_params["hidden_size"], 
+                                 hidden_continuous_size = best_params["hidden_size"], 
+                                 lstm_layers = best_params["lstm_layers"], 
+                                 num_attention_heads = best_params["num_attention_heads"], 
+                                 dropout = best_params["dropout"], 
+                                 learning_rate = best_params["learning_rate"])
+    tft_models_sens.append(curr_model)
 
+#%%
+## 3.3 Fitting Models ----
+
+### 3.3.1 Fitting Main ----
+#First, we fit the models maximising the training data (using hold as both training and input series)
 for i in range(num_models):
     print(f"Fitting Linear Regression model {i+1} of {num_models}")
     lr_models[i].fit(series = hold_log_sc_s[i], 
                      future_covariates = clim_hold_targ_log_s[i])
-
-
-#%%
 #Fit the prophet models -- these are local models 
 for i in range(num_models):
     for j in range(len(uf_list)):
@@ -634,13 +703,61 @@ for i in range(num_models):
         proph_models[i][j].fit(series = hold_log_sc_s[i][j], 
                                future_covariates = clim_hold_targ_log_s[i][j])
 
-
-#%%
 #Fit the seasonal average models -- these are also local models 
 for i in range(num_models):
     print(f"Fitting Seasonal Average model {i+1} of {num_models}")
     seas_avg_models[i].fit(series = hold[i])
 
+
+### 3.3.2 Fitting Sensitivity ----
+for i in range(num_models):
+    print(f"Fitting Linear Regression model {i+1} of {num_models}")
+    lr_models[i].fit(series = train_log_sc_s[i], 
+                     future_covariates = clim_train_val_log_s[i])
+#Fit the prophet models -- these are local models 
+for i in range(num_models):
+    for j in range(len(uf_list)):
+        print(f"Fitting Prophet model {i+1} of {num_models} for uf {uf_list[j]}")
+        proph_models[i][j].fit(series = train_log_sc_s[i][j], 
+                               future_covariates = clim_train_val_log_s[i][j])
+
+#Fit the seasonal average models -- these are also local models 
+for i in range(num_models):
+    print(f"Fitting Seasonal Average model {i+1} of {num_models}")
+    seas_avg_models[i].fit(series = train[i])
+
+#%%
+#Also fit the sensitivity analysis TFT
+
+#We have to convert the relevant series into float32 
+train_log_sc_s_f32 = nhp.ts_list_set_conv_dtype(train_log_sc_s)
+gap_log_s_f32 = nhp.ts_list_set_conv_dtype(gap_log_s)
+val_log_s_f32 = nhp.ts_list_set_conv_dtype(val_log_s)
+clim_train_val_log_s_f32 = nhp.ts_list_set_conv_dtype(clim_train_val_log_s)
+
+input_chunk_length = best_params["input_chunk_length"]
+dyn_val_sets_log_s_f32 = []
+for i in range(num_models):
+    curr_train_list = train_log_sc_s_f32[i]
+    curr_gap_list = gap_log_s_f32[i]
+    curr_val_list = val_log_s_f32[i]
+    curr_dyn_val_list = []
+    for j in range(len(curr_train_list)):
+        curr_train = curr_train_list[j]
+        curr_gap = curr_gap_list[j]
+        curr_val = curr_val_list[j]
+
+        curr_dyn_val_ts = concatenate([curr_train[-input_chunk_length:], curr_gap, curr_val])
+
+        curr_dyn_val_list.append(curr_dyn_val_ts)
+    dyn_val_sets_log_s_f32.append(curr_dyn_val_list)
+
+
+#%%
+for i in range(num_models):
+    print(f"Fitting TFT model {i+1} of {num_models}")
+    tft_models_sens[i].fit(series = train_log_sc_s_f32[i], val_series = dyn_val_sets_log_s_f32[i],
+                           future_covariates = clim_train_val_log_s_f32[i], val_future_covariates = clim_train_val_log_s_f32[i])
 
 #%%
 # 3.4 Generating Forecasts ----
@@ -648,6 +765,7 @@ gap_length = 15
 
 forecast_lengths = [len(targ[i][0]) + gap_length for i in range(num_models)] #The forecast length is the length of the target set plus the gap length
 
+#Main forecasts
 lr_preds_log_s = []
 proph_preds_log_s = []
 seas_avg_preds = [] 
@@ -674,8 +792,53 @@ for i in range(num_models):
     seas_avg_preds.append(curr_seas_avg_preds)
 
 #%%
+# Sensitivity forecasts -- input sequences should be the same as main 
+lr_sens_preds_log_s = []
+proph_sens_preds_log_s = []
+seas_avg_sens_preds = [] 
+for i in range(num_models):
+    print(f"Generating forecasts for model {i+1} of {num_models}")
+    
+    #Linear Regression
+    curr_lr_preds = lr_models_sens[i].predict(n = forecast_lengths[i], 
+                                         series = hold_log_sc_s[i], 
+                                         future_covariates = clim_hold_targ_log_s[i])
+    
+    #Prophet
+    curr_proph_preds = [proph_models_sens[i][j].predict(n = forecast_lengths[i], num_samples = 200, 
+                                                   series = hold_log_sc_s[i][j], 
+                                                   future_covariates = clim_hold_targ_log_s[i][j]) for j in range(len(uf_list))]
+    
+    #Seasonal Average
+    curr_seas_avg_preds = seas_avg_models_sens[i].predict(n = forecast_lengths[i], 
+                                                     series = hold[i])
+
+   #Add the predictions to the lists 
+    lr_sens_preds_log_s.append(curr_lr_preds)
+    proph_sens_preds_log_s.append(curr_proph_preds)
+    seas_avg_sens_preds.append(curr_seas_avg_preds)
+
+#%%
+# TFT forecasts - load the best models first
+best_tft_models_sens = [curr_model.load_from_checkpoint(curr_model.model_name, best = True) for curr_model in tft_models_sens]
+hold_log_sc_s_f32 = nhp.ts_list_set_conv_dtype(hold_log_sc_s)
+clim_hold_targ_log_s_f32 = nhp.ts_list_set_conv_dtype(clim_hold_targ_log_s)
+#Generate forecasts using the best models 
+tft_sens_preds_log_s = []
+for i in range(num_models):
+    print(f"Generating TFT forecasts for model {i+1} of {num_models}")
+    curr_tft_preds = best_tft_models_sens[i].predict(n = forecast_lengths[i], 
+                                                     series = hold_log_sc_s_f32[i], 
+                                                     future_covariates = clim_hold_targ_log_s_f32[i],
+                                                     num_samples = 200
+                                                     )
+    tft_sens_preds_log_s.append(curr_tft_preds)
+
+
+#%%
 # 3.5 Forecast post-processing ----
 
+## 3.5.1 Post-process main
 #For LR and prophet predictions - invert transforms to get back to natural scale
 lr_preds_log = [den_eval_scaler.inverse_transform(curr_preds) for curr_preds in lr_preds_log_s]
 proph_preds_log = [den_eval_scaler.inverse_transform(curr_preds) for curr_preds in proph_preds_log_s]
@@ -688,6 +851,21 @@ proph_preds = [[curr_ts.map(np.expm1) for curr_ts in curr_preds] for curr_preds 
 seas_avg_preds_log = [[curr_ts.map(np.log1p) for curr_ts in curr_preds] for curr_preds in seas_avg_preds]
 seas_avg_preds_log_s = [den_eval_scaler.transform(curr_preds) for curr_preds in seas_avg_preds_log]
 
+## 3.5.2 Post-process sensitivity 
+#Same post-processing as above but we run it on the results of the sensitivity analysis, including the TFT
+lr_sens_preds_log = [den_eval_scaler.inverse_transform(curr_preds) for curr_preds in lr_sens_preds_log_s]
+proph_sens_preds_log = [den_eval_scaler.inverse_transform(curr_preds) for curr_preds in proph_sens_preds_log_s]
+tft_sens_preds_log = [den_eval_scaler.inverse_transform(curr_preds) for curr_preds in tft_sens_preds_log_s]
+
+
+lr_sens_preds = [[curr_ts.map(np.expm1) for curr_ts in curr_preds] for curr_preds in lr_sens_preds_log]
+proph_sens_preds = [[curr_ts.map(np.expm1) for curr_ts in curr_preds] for curr_preds in proph_sens_preds_log]
+tft_sens_preds = [[curr_ts.map(np.expm1) for curr_ts in curr_preds] for curr_preds in tft_sens_preds_log]
+
+seas_avg_sens_preds_log = [[curr_ts.map(np.log1p) for curr_ts in curr_preds] for curr_preds in seas_avg_sens_preds]
+seas_avg_sens_preds_log_s = [den_eval_scaler.transform(curr_preds) for curr_preds in seas_avg_sens_preds_log]
+
+#%%
 # 4. Outputting Baseline Forecasts
 
 #Create some dictionaries to output the forecasts 
@@ -707,7 +885,37 @@ seas_avg_preds_dict = {
     "preds_log_s": seas_avg_preds_log_s
 }
 
+lr_sens_preds_dict = {
+    "preds": lr_sens_preds,
+    "preds_log": lr_sens_preds_log,
+    "preds_log_s": lr_sens_preds_log_s
+}
+
+proph_sens_preds_dict = {
+    "preds": proph_sens_preds,
+    "preds_log": proph_sens_preds_log,
+    "preds_log_s": proph_sens_preds_log_s
+}
+
+seas_avg_sens_preds_dict = {
+    "preds": seas_avg_sens_preds,
+    "preds_log": seas_avg_sens_preds_log,
+    "preds_log_s": seas_avg_sens_preds_log_s
+}
+
+tft_sens_preds_dict = {
+    "preds": tft_sens_preds,
+    "preds_log": tft_sens_preds_log,
+    "preds_log_s": tft_sens_preds_log_s
+}
+
 #Save the dicts as pickles to the output directory
 hp.save_pickle(lr_preds_dict, os.path.join(output_dir, "lr_preds_dict.pkl"))
 hp.save_pickle(proph_preds_dict, os.path.join(output_dir, "proph_preds_dict.pkl"))
 hp.save_pickle(seas_avg_preds_dict, os.path.join(output_dir, "seas_avg_preds_dict.pkl"))
+
+hp.save_pickle(lr_sens_preds_dict, os.path.join(output_dir, "lr_sens_preds_dict.pkl"))
+hp.save_pickle(proph_sens_preds_dict, os.path.join(output_dir, "proph_sens_preds_dict.pkl"))
+hp.save_pickle(seas_avg_sens_preds_dict, os.path.join(output_dir, "seas_avg_sens_preds_dict.pkl"))
+
+hp.save_pickle(tft_sens_preds_dict, os.path.join(output_dir, "tft_sens_preds_dict.pkl"))

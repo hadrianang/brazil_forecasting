@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 from pytorch_lightning.callbacks import Callback, EarlyStopping
 import pickle
 
-def create_ts(data_df, val_cols, set_info = None, set_column = None, time_col = "WeekStart", time_format = "%Y-%m-%d"):
+def create_ts(data_df, val_cols, set_info = None, set_column = None, time_col = "WeekStart", time_format = "%Y-%m-%d", to_float32 = False):
     """
     Function creates a TimeSeries object from a DataFrame using only rows where set_column is true
 
@@ -40,12 +40,15 @@ def create_ts(data_df, val_cols, set_info = None, set_column = None, time_col = 
         data_df = pd.merge(data_df, set_info, how = "left", on = ["Year", "Week", "epiweek"]) 
     if set_column is not None:
         data_df = data_df[data_df[set_column]]
-    
+     
     curr_ts = TimeSeries.from_times_and_values(times = data_df.index, values = data_df[val_cols], columns = val_cols)
+
+    if to_float32:
+        curr_ts = curr_ts.astype(np.float32)
     return curr_ts
 
 
-def create_ts_list(data_df, val_cols, group_col, group_vals, set_info = None, set_column = None, time_col = "WeekStart", time_format = "%Y-%m-%d"):
+def create_ts_list(data_df, val_cols, group_col, group_vals, set_info = None, set_column = None, time_col = "WeekStart", time_format = "%Y-%m-%d", to_float32 = False):
     """
     Function creates a list TimeSeries objects from a DataFrame. Each list element is a TimeSeries for a particular unit from group_vals, based on the group_col
 
@@ -68,7 +71,7 @@ def create_ts_list(data_df, val_cols, group_col, group_vals, set_info = None, se
         
     for curr_unit in group_vals:
         curr_unit_df = data_df[data_df[group_col] == curr_unit]
-        curr_unit_ts = create_ts(curr_unit_df, val_cols, set_column = set_column, time_col = time_col, time_format = time_format) #No need to pass set_info here since we have already merged in this function
+        curr_unit_ts = create_ts(curr_unit_df, val_cols, set_column = set_column, time_col = time_col, time_format = time_format, to_float32 = to_float32) #No need to pass set_info here since we have already merged in this function
         to_ret.append(curr_unit_ts)
     return to_ret
 

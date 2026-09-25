@@ -576,7 +576,7 @@ lr_loc_mets = nhp.get_den_loc_mets_tables(lr_mets, main_eval_dict, admin_level_l
 curr_ind = 1
 curr_input = hold[curr_ind]
 curr_test = targ[curr_ind]
-curr_preds = main_targ_preds[curr_ind]
+curr_preds = seas_avg_preds[curr_ind]
 
 curr_ts_dict_list = nhp.create_ts_dict_list([curr_input, curr_test, curr_preds], ["Input", "Test", "Forecast"], uf_name_list)
 
