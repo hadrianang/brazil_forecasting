@@ -454,6 +454,10 @@ clim_hold_targ4_log_s = hp.ts_list_concatenate([clim_hold4_log_s, clim_preds_tar
 #%%
 # Grouping series into sets for easier handling
 
+train = [train1, train2, train3]
+train_log = [train1_log, train2_log, train3_log]
+train_log_s = [train1_log_sc_s, train2_log_sc_s, train3_log_sc_s]
+
 hold = [hold1, hold2, hold3]
 hold_log_sc = [hold1_log_sc, hold2_log_sc, hold3_log_sc]
 hold_log_sc_s = [hold1_log_sc_s, hold2_log_sc_s, hold3_log_sc_s]
@@ -656,7 +660,7 @@ for i in range(num_models):
                                          future_covariates = clim_hold_targ_log_s[i])
     
     #Prophet
-    curr_proph_preds = [proph_models[i][j].predict(n = forecast_lengths[i], 
+    curr_proph_preds = [proph_models[i][j].predict(n = forecast_lengths[i], num_samples = 200, 
                                                    series = hold_log_sc_s[i][j], 
                                                    future_covariates = clim_hold_targ_log_s[i][j]) for j in range(len(uf_list))]
     
@@ -683,8 +687,6 @@ proph_preds = [[curr_ts.map(np.expm1) for curr_ts in curr_preds] for curr_preds 
 #For the naive seasonal forecasts - add the log transform then scale
 seas_avg_preds_log = [[curr_ts.map(np.log1p) for curr_ts in curr_preds] for curr_preds in seas_avg_preds]
 seas_avg_preds_log_s = [den_eval_scaler.transform(curr_preds) for curr_preds in seas_avg_preds_log]
-
-
 
 # 4. Outputting Baseline Forecasts
 

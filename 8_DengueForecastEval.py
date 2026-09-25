@@ -8,7 +8,7 @@ import json
 
 from darts import TimeSeries, concatenate
 from darts.utils.callbacks import TFMProgressBar
-from darts.metrics import mape, smape, mse, rmse, mae, mql, ql
+from darts.metrics import mape, smape, mse, rmse, mae, mql, ql, mic, ic, mcrps
 from darts.dataprocessing.transformers import Scaler
 from darts.dataprocessing.transformers import StaticCovariatesTransformer
 from sklearn.preprocessing import MinMaxScaler
@@ -159,6 +159,8 @@ uf_list = climate_df["uf"].unique()
 uf_mapper = climate_df[["uf", "uf_name"]].copy().drop_duplicates()
 uf_dict = dict(zip(uf_mapper["uf"], uf_mapper["uf_name"]))
 uf_name_list = [uf_dict[curr_uf] for curr_uf in uf_list]
+
+admin_level_list = ["State" for curr_uf in uf_list]
 
 
 #%%
@@ -470,8 +472,114 @@ targ_log_s = [targ1_log_s, targ2_log_s, targ3_log_s]
 clim_hold_targ_log_s = [clim_hold_targ1_log_s, clim_hold_targ2_log_s, clim_hold_targ3_log_s]
 
 #%%
+# 3. Reading forecasts to evaluate ----
+#Read pickles with the main forecast values
 tag = "GlobalFit=False_TrainFromScratch=False"
 tag_multi = "GlobalFit=False_TrainFromScratch=False_MultiClimate=True"
 tag_single = "GlobalFit=False_TrainFromScratch=False_MultiClimate=False"
 main_fc_multi = hp.load_pickle(os.path.join(rd2_dir, f"Targ_{tag_multi}.pkl"))
 main_fc_single = hp.load_pickle(os.path.join(rd2_dir, f"Targ_{tag_single}.pkl"))
+
+#%%
+#Read the baseline forecasts as well
+lr_preds_dict = hp.load_pickle(os.path.join(baseline_dir, "lr_preds_dict.pkl"))
+proph_preds_dict = hp.load_pickle(os.path.join(baseline_dir, "proph_preds_dict.pkl"))
+seas_avg_preds_dict = hp.load_pickle(os.path.join(baseline_dir, "seas_avg_preds_dict.pkl"))
+
+#%%
+
+#Main model values
+main_preds = main_fc_multi
+
+main_eval_scaler = den_eval_scaler
+main_targ_preds = [main_preds["targ1_preds"], main_preds["targ2_preds"], main_preds["targ3_preds"]]
+main_targ_preds_log_s = [main_preds["targ1_preds_log_s"], main_preds["targ2_preds_log_s"], main_preds["targ3_preds_log_s"]]
+main_targ_preds_log = nhp.transform_comps_ts_list_set(main_targ_preds, comps_to_trans = ["Cases"], trans_func = np.log1p)
+
+#%% 
+#Baseline model values 
+lr_preds = lr_preds_dict["preds"]
+lr_preds_log = lr_preds_dict["preds_log"]
+lr_preds_log_s = lr_preds_dict["preds_log_s"]
+
+proph_preds = proph_preds_dict["preds"]
+proph_preds_log = proph_preds_dict["preds_log"]
+proph_preds_log_s = proph_preds_dict["preds_log_s"]
+
+seas_avg_preds = seas_avg_preds_dict["preds"]
+seas_avg_preds_log = seas_avg_preds_dict["preds_log"]
+seas_avg_preds_log_s = seas_avg_preds_dict["preds_log_s"]
+
+bl_preds = [lr_preds, proph_preds, seas_avg_preds]
+bl_preds_log = [lr_preds_log, proph_preds_log, seas_avg_preds_log]
+bl_preds_log_s = [lr_preds_log_s, proph_preds_log_s, seas_avg_preds_log_s]
+
+#%%
+def trunc_to_obs(obs_set, to_trunc):
+    to_ret = []
+    for curr_obs_list, curr_trunc_list in zip(obs_set, to_trunc):
+        curr_ret = []
+        for curr_obs, curr_trunc in zip(curr_obs_list, curr_trunc_list):
+            curr_ret.append(curr_trunc.slice_intersect(curr_obs))
+        to_ret.append(curr_ret)
+    return to_ret
+
+main_preds_trunc = trunc_to_obs(targ, main_targ_preds)
+lr_preds_trunc = trunc_to_obs(targ, lr_preds)
+proph_preds_trunc = trunc_to_obs(targ, proph_preds)
+seas_avg_preds_trunc = trunc_to_obs(targ, seas_avg_preds)
+
+#%%
+# 4. Computing Error metrics ----
+# To compute error metrics, we compare values to Targ1, 2, and 3
+# Note that targ3 is shorter than the others due to the time when the competition ran
+# 
+#collect_set_metrics(obs_list_set_dict, preds_list_set_dict, normer_list = None, comp_summ_func = None, series_summ_func = None, meta_metrics = ["mae"], meta_norms = ["min_max"], manual_log = True, extras = {}, strict = True)
+
+obs_list_set_dict = {"nat": targ, "log": targ_log, "scaled": targ_log_s}
+main_preds_set_dict = {"nat": main_targ_preds, "log": main_targ_preds_log, "scaled": main_targ_preds_log_s}
+lr_preds_set_dict = {"nat": lr_preds, "log": lr_preds_log, "scaled": lr_preds_log_s}
+proph_preds_set_dict = {"nat": proph_preds, "log": proph_preds_log, "scaled": proph_preds_log_s}
+seas_avg_preds_set_dict = {"nat": seas_avg_preds, "log": seas_avg_preds_log, "scaled": seas_avg_preds_log_s}
+
+normer_list = train1
+meta_metrics = ["mcrps", "mae", "mic"]
+meta_metrics_det = ["mcrps", "mae"]
+meta_norms = ["min_max", "log", "nat", "scaled"]
+extras = {"quantiles": quantiles, "mic_q_interval_list": [[0.025, 0.975], [0.25, 0.75]]}
+
+main_mets = nhp.collect_set_metrics(obs_list_set_dict, main_preds_set_dict, normer_list = normer_list, meta_metrics = meta_metrics, meta_norms = meta_norms, extras = extras, strict = False)
+lr_mets = nhp.collect_set_metrics(obs_list_set_dict, lr_preds_set_dict, normer_list = normer_list, meta_metrics = meta_metrics_det, meta_norms = meta_norms, extras = extras, strict = False)
+proph_mets = nhp.collect_set_metrics(obs_list_set_dict, proph_preds_set_dict, normer_list = normer_list, meta_metrics = meta_metrics, meta_norms = meta_norms, extras = extras, strict = False)
+seas_avg_mets = nhp.collect_set_metrics(obs_list_set_dict, seas_avg_preds_set_dict, normer_list = normer_list, meta_metrics = meta_metrics_det, meta_norms = meta_norms, extras = extras, strict = False)
+
+#%% Compute the MCRPSS versus each baseline model
+score_key = "nat_mcrps"
+main_mets["mcrpss_lr"] = 1 - (main_mets[score_key] / lr_mets[score_key])
+main_mets["mcrpss_proph"] = 1 - (main_mets[score_key] / proph_mets[score_key])
+main_mets["mcrpss_seas_avg"] = 1 - (main_mets[score_key] / seas_avg_mets[score_key])
+
+main_eval_dict = {
+    "obs": obs_list_set_dict,
+    "preds": main_preds_set_dict,
+}
+
+main_loc_mets = nhp.get_den_loc_mets_tables(main_mets, main_eval_dict, admin_level_list, uf_name_list, fold_weighted = True)
+
+proph_loc_mets = nhp.get_den_loc_mets_tables(proph_mets, main_eval_dict, admin_level_list, uf_name_list, fold_weighted = True)
+
+lr_loc_mets = nhp.get_den_loc_mets_tables(lr_mets, main_eval_dict, admin_level_list, uf_name_list, fold_weighted = True)
+
+
+#%%
+#Generate some plots
+curr_ind = 1
+curr_input = hold[curr_ind]
+curr_test = targ[curr_ind]
+curr_preds = main_targ_preds[curr_ind]
+
+curr_ts_dict_list = nhp.create_ts_dict_list([curr_input, curr_test, curr_preds], ["Input", "Test", "Forecast"], uf_name_list)
+
+nhp.plot_dict_list(curr_ts_dict_list, low_quantile = 0.025, central_quantile = 0.5, high_quantile = 0.975, 
+                   width = 10, height = 18, curr_fig_dims = None, limit_dict = {"Input": 104})
+
