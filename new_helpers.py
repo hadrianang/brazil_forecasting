@@ -201,7 +201,7 @@ def merge_ts_list_set(series_list_set):
     return to_ret
    
 
-def ts_list_concatenate(series_lists):
+def ts_list_concatenate(series_lists, ignore_time_axis = False):
     """
     Returns a list of TimeSeries concatenating each set of series from the input list of lists (aligning on index)
     This assumes all input lists are of the same length
@@ -210,8 +210,23 @@ def ts_list_concatenate(series_lists):
     list_len = len(series_lists[0]) #Assume that all the input lists have the same length
     for i in range(list_len):
         to_concat = [curr_list[i] for curr_list in series_lists]
-        to_ret.append(concatenate(to_concat))
+        to_ret.append(concatenate(to_concat, ignore_time_axis = ignore_time_axis))
     return to_ret
+
+def ts_list_set_concatenate(series_set_lists, ignore_time_axis = False):
+    """
+    Given a set of TimeSeries lists, returns a single set of TimeSeries lists concatenating each set of series from the input set of lists (aligning on index)
+    This assumes all input sets are of the same length and that each set contains lists of the same length.
+    
+    We can, for example, merge the MOH, District, and National-level TimeSeries sets into a single set.
+    """
+    to_ret = []
+    set_len = len(series_set_lists[0]) #Assume that all the input sets have the same length
+    for i in range(set_len):
+        curr_set_to_concat = [curr_set[i] for curr_set in series_set_lists]
+        curr_set_concatenated = ts_list_concatenate(curr_set_to_concat, ignore_time_axis = ignore_time_axis)
+        to_ret.append(curr_set_concatenated)
+    return to_ret 
 
 def ts_list_set_collapse(ts_list_set):
     """
@@ -225,22 +240,6 @@ def ts_list_set_collapse(ts_list_set):
         curr_set_concatenated = concatenate(curr_set_to_concat)
         to_ret.append(curr_set_concatenated)
     return to_ret
-
-
-def ts_list_set_concatenate(series_set_lists):
-    """
-    Given a set of TimeSeries lists, returns a single set of TimeSeries lists concatenating each set of series from the input set of lists (aligning on index)
-    This assumes all input sets are of the same length and that each set contains lists of the same length.
-    
-    We can, for example, merge the MOH, District, and National-level TimeSeries sets into a single set.
-    """
-    to_ret = []
-    set_len = len(series_set_lists[0]) #Assume that all the input sets have the same length
-    for i in range(set_len):
-        curr_set_to_concat = [curr_set[i] for curr_set in series_set_lists]
-        curr_set_concatenated = ts_list_concatenate(curr_set_to_concat)
-        to_ret.append(curr_set_concatenated)
-    return to_ret 
 
 def ts_list_pair_concat(list_a, list_b, lim_a = None):
     """

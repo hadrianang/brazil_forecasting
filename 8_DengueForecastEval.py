@@ -6,6 +6,7 @@ import torch
 import os
 import json
 
+from scipy.stats import gmean
 from darts import TimeSeries, concatenate
 from darts.utils.callbacks import TFMProgressBar
 from darts.metrics import mape, smape, mse, rmse, mae, mql, ql, mic, ic, mcrps
@@ -22,8 +23,19 @@ from darts.models import (
 )
 from darts.utils.likelihood_models import GaussianLikelihood, PoissonLikelihood, QuantileRegression
 import matplotlib.pyplot as plt
+from matplotlib.ticker import StrMethodFormatter
 from pytorch_lightning.callbacks import Callback, EarlyStopping
 import pickle
+
+from IPython import get_ipython
+ip = get_ipython()
+if ip:
+    print("Running in iPython")
+    ip.run_line_magic("load_ext", "autoreload")
+    ip.run_line_magic("autoreload", "1")
+    ip.run_line_magic("aimport", "helpers")
+    ip.run_line_magic("aimport", "new_helpers")
+
 import helpers as hp
 import new_helpers as nhp
 
@@ -486,48 +498,50 @@ lr_preds_dict = hp.load_pickle(os.path.join(baseline_dir, "lr_preds_dict.pkl"))
 proph_preds_dict = hp.load_pickle(os.path.join(baseline_dir, "proph_preds_dict.pkl"))
 seas_avg_preds_dict = hp.load_pickle(os.path.join(baseline_dir, "seas_avg_preds_dict.pkl"))
 
+lr_sens_preds_dict = hp.load_pickle(os.path.join(baseline_dir, "lr_sens_preds_dict.pkl"))
+proph_sens_preds_dict = hp.load_pickle(os.path.join(baseline_dir, "proph_sens_preds_dict.pkl"))
+seas_avg_sens_preds_dict = hp.load_pickle(os.path.join(baseline_dir, "seas_avg_sens_preds_dict.pkl"))
+
+tft_sens_preds_dict = hp.load_pickle(os.path.join(baseline_dir, "tft_sens_preds_dict.pkl"))
+tft_sens_preds_max_dict = hp.load_pickle(os.path.join(baseline_dir, "tft_sens_preds_max_dict.pkl"))
+
+
 #%%
 
 #Main model values
-main_preds = main_fc_multi
+main_preds_dict = main_fc_multi
 
 main_eval_scaler = den_eval_scaler
-main_targ_preds = [main_preds["targ1_preds"], main_preds["targ2_preds"], main_preds["targ3_preds"]]
-main_targ_preds_log_s = [main_preds["targ1_preds_log_s"], main_preds["targ2_preds_log_s"], main_preds["targ3_preds_log_s"]]
-main_targ_preds_log = nhp.transform_comps_ts_list_set(main_targ_preds, comps_to_trans = ["Cases"], trans_func = np.log1p)
+main_preds = [main_preds_dict["targ1_preds"], main_preds_dict["targ2_preds"], main_preds_dict["targ3_preds"]]
+main_preds_log_s = [main_preds_dict["targ1_preds_log_s"], main_preds_dict["targ2_preds_log_s"], main_preds_dict["targ3_preds_log_s"]]
+main_preds_log = nhp.transform_comps_ts_list_set(main_preds, comps_to_trans = ["Cases"], trans_func = np.log1p)
 
 #%% 
-#Baseline model values 
-lr_preds = lr_preds_dict["preds"]
-lr_preds_log = lr_preds_dict["preds_log"]
-lr_preds_log_s = lr_preds_dict["preds_log_s"]
+#Define a function that returns the set dict with nat, log, scaled keys
+def get_set_dict(preds_dict):
+    #Assumes preds, preds_log, preds_log_s keys
+    set_dict = {
+        "nat": preds_dict["preds"],
+        "log": preds_dict["preds_log"],
+        "scaled": preds_dict["preds_log_s"]
+    }
+    return set_dict
 
-proph_preds = proph_preds_dict["preds"]
-proph_preds_log = proph_preds_dict["preds_log"]
-proph_preds_log_s = proph_preds_dict["preds_log_s"]
 
-seas_avg_preds = seas_avg_preds_dict["preds"]
-seas_avg_preds_log = seas_avg_preds_dict["preds_log"]
-seas_avg_preds_log_s = seas_avg_preds_dict["preds_log_s"]
+obs_list_set_dict = {"nat": targ, "log": targ_log, "scaled": targ_log_s}
+main_preds_set_dict = {"nat": main_preds, "log": main_preds, "scaled": main_preds_log_s}
 
-bl_preds = [lr_preds, proph_preds, seas_avg_preds]
-bl_preds_log = [lr_preds_log, proph_preds_log, seas_avg_preds_log]
-bl_preds_log_s = [lr_preds_log_s, proph_preds_log_s, seas_avg_preds_log_s]
+lr_preds_set_dict = get_set_dict(lr_preds_dict)
+proph_preds_set_dict = get_set_dict(proph_preds_dict)
+seas_avg_preds_set_dict = get_set_dict(seas_avg_preds_dict)
 
-#%%
-def trunc_to_obs(obs_set, to_trunc):
-    to_ret = []
-    for curr_obs_list, curr_trunc_list in zip(obs_set, to_trunc):
-        curr_ret = []
-        for curr_obs, curr_trunc in zip(curr_obs_list, curr_trunc_list):
-            curr_ret.append(curr_trunc.slice_intersect(curr_obs))
-        to_ret.append(curr_ret)
-    return to_ret
+lr_sens_preds_set_dict = get_set_dict(lr_sens_preds_dict)
+proph_sens_preds_set_dict = get_set_dict(proph_sens_preds_dict)
+seas_avg_sens_preds_set_dict = get_set_dict(seas_avg_sens_preds_dict)
 
-main_preds_trunc = trunc_to_obs(targ, main_targ_preds)
-lr_preds_trunc = trunc_to_obs(targ, lr_preds)
-proph_preds_trunc = trunc_to_obs(targ, proph_preds)
-seas_avg_preds_trunc = trunc_to_obs(targ, seas_avg_preds)
+tft_sens_preds_set_dict = get_set_dict(tft_sens_preds_dict)
+tft_sens_preds_max_set_dict = get_set_dict(tft_sens_preds_max_dict)
+
 
 #%%
 # 4. Computing Error metrics ----
@@ -536,11 +550,6 @@ seas_avg_preds_trunc = trunc_to_obs(targ, seas_avg_preds)
 # 
 #collect_set_metrics(obs_list_set_dict, preds_list_set_dict, normer_list = None, comp_summ_func = None, series_summ_func = None, meta_metrics = ["mae"], meta_norms = ["min_max"], manual_log = True, extras = {}, strict = True)
 
-obs_list_set_dict = {"nat": targ, "log": targ_log, "scaled": targ_log_s}
-main_preds_set_dict = {"nat": main_targ_preds, "log": main_targ_preds_log, "scaled": main_targ_preds_log_s}
-lr_preds_set_dict = {"nat": lr_preds, "log": lr_preds_log, "scaled": lr_preds_log_s}
-proph_preds_set_dict = {"nat": proph_preds, "log": proph_preds_log, "scaled": proph_preds_log_s}
-seas_avg_preds_set_dict = {"nat": seas_avg_preds, "log": seas_avg_preds_log, "scaled": seas_avg_preds_log_s}
 
 normer_list = train1
 meta_metrics = ["mcrps", "mae", "mic"]
@@ -553,33 +562,292 @@ lr_mets = nhp.collect_set_metrics(obs_list_set_dict, lr_preds_set_dict, normer_l
 proph_mets = nhp.collect_set_metrics(obs_list_set_dict, proph_preds_set_dict, normer_list = normer_list, meta_metrics = meta_metrics, meta_norms = meta_norms, extras = extras, strict = False)
 seas_avg_mets = nhp.collect_set_metrics(obs_list_set_dict, seas_avg_preds_set_dict, normer_list = normer_list, meta_metrics = meta_metrics_det, meta_norms = meta_norms, extras = extras, strict = False)
 
+#No sens_mets for Prophet, which requires that predictions immediately follow the training series
+lr_sens_mets = nhp.collect_set_metrics(obs_list_set_dict, lr_sens_preds_set_dict, normer_list = normer_list, meta_metrics = meta_metrics_det, meta_norms = meta_norms, extras = extras, strict = False)
+# proph_sens_mets = nhp.collect_set_metrics(obs_list_set_dict, proph_sens_preds_set_dict, normer_list = normer_list, meta_metrics = meta_metrics_det, meta_norms = meta_norms, extras = extras, strict = False)
+seas_avg_sens_mets = nhp.collect_set_metrics(obs_list_set_dict, seas_avg_sens_preds_set_dict, normer_list = normer_list, meta_metrics = meta_metrics_det, meta_norms = meta_norms, extras = extras, strict = False)
+
+tft_sens_mets = nhp.collect_set_metrics(obs_list_set_dict, tft_sens_preds_set_dict, normer_list = normer_list, meta_metrics = meta_metrics_det, meta_norms = meta_norms, extras = extras, strict = False)
+tft_sens_max_mets = nhp.collect_set_metrics(obs_list_set_dict, tft_sens_preds_max_set_dict, normer_list = normer_list, meta_metrics = meta_metrics_det, meta_norms = meta_norms, extras = extras, strict = False)
+
 #%% Compute the MCRPSS versus each baseline model
-score_key = "nat_mcrps"
-main_mets["mcrpss_lr"] = 1 - (main_mets[score_key] / lr_mets[score_key])
-main_mets["mcrpss_proph"] = 1 - (main_mets[score_key] / proph_mets[score_key])
-main_mets["mcrpss_seas_avg"] = 1 - (main_mets[score_key] / seas_avg_mets[score_key])
+model_mets_dicts = {
+    "MainTFT": main_mets,
+    "LR": lr_mets,
+    "Prophet": proph_mets,
+    "SeasAvg": seas_avg_mets,
+    "LR_Sens": lr_sens_mets,
+    "SeasAvg_Sens": seas_avg_sens_mets,
+    "TFT_Sens": tft_sens_mets,
+    "TFT_Sens_Max": tft_sens_max_mets
+}
 
 main_eval_dict = {
     "obs": obs_list_set_dict,
-    "preds": main_preds_set_dict,
 }
 
-main_loc_mets = nhp.get_den_loc_mets_tables(main_mets, main_eval_dict, admin_level_list, uf_name_list, fold_weighted = True)
+loc_mets_dict = {curr_key: nhp.get_den_loc_mets_tables(model_mets_dicts[curr_key], main_eval_dict, admin_level_list, uf_name_list, fold_weighted = True) for curr_key in model_mets_dicts.keys()}
+#%%
+#Compute skill scores to add to each of the TFTs - main, tft_sens, tft_sens_max versus every other model
 
-proph_loc_mets = nhp.get_den_loc_mets_tables(proph_mets, main_eval_dict, admin_level_list, uf_name_list, fold_weighted = True)
 
-lr_loc_mets = nhp.get_den_loc_mets_tables(lr_mets, main_eval_dict, admin_level_list, uf_name_list, fold_weighted = True)
+def trunc_intersect(obs_set, preds_set):
+    #Truncate predictions to get only those that overlap with the observed values
+    #Assumes both are ts_list_sets
+    
+    ts_list_set = []
+    for curr_obs_list, curr_preds_list in zip(obs_set, preds_set):
+        ts_list = [] 
+        for curr_obs, curr_preds in zip(curr_obs_list, curr_preds_list):
+            curr_preds_trunc = curr_preds.slice_intersect(curr_obs)
+            ts_list.append(curr_preds_trunc)
+        ts_list_set.append(ts_list)
+
+    return ts_list_set
+
+def trunc_intersect_set_dict(obs_set_dict, preds_set_dict):
+    key_list = obs_set_dict.keys()
+    to_ret = {}
+    for curr_key in key_list:
+        to_ret[curr_key] = trunc_intersect(obs_set_dict[curr_key], preds_set_dict[curr_key])
+    return to_ret
+
+def ts_list_set_dict_collapse(preds_set_dict):
+    key_list = preds_set_dict.keys()
+    to_ret = {}
+    for curr_key in key_list:
+        to_ret[curr_key] = nhp.ts_list_set_collapse(preds_set_dict[curr_key])
+    return to_ret
+
+
+#Sanity check 
+# main_preds_set_dict_trunc = trunc_intersect_set_dict(obs_list_set_dict, main_preds_set_dict)
+
+
+
+# #Concatenate all the main predictions 
+# main_preds_set_dict_concat = ts_list_set_dict_collapse(main_preds_set_dict_trunc)
+# obs_preds_set_dict_concat = ts_list_set_dict_collapse(obs_list_set_dict)
+
+# curr_key = "nat"
+# curr_ind = 0 
+# curr_preds = main_preds_set_dict_concat[curr_key][curr_ind]
+# curr_obs = obs_preds_set_dict_concat[curr_key][curr_ind]
+
+
+# curr_mcrps = mcrps(curr_obs, curr_preds)
+
+#%%
+#Write a function that accepts one main prediction mets dict and multiple baselines (with names) then outputs
+#a DataFrame containing the skill scores for each location and baseline model together with mean, min, and max summary rows
+
+def compute_skill_scores(curr_main_mets, baselines, base_score_names, weights, curr_main_name = None):
+    baselines = baselines.copy() 
+    if curr_main_name is not None and curr_main_name in baselines:
+        baselines.pop(curr_main_name)
+    
+    #Get number of sets 
+    num_sets = curr_main_mets[base_score_names[0]].shape[0]
+    baseline_names = list(baselines.keys())
+
+    #The return is a list of DataFrames of length num_sets + 1 containing
+    #skill scores per set and overall
+    to_ret = [{} for i in range(num_sets + 1)]
+
+    #For each base score and other baseline model
+    for curr_base_score in base_score_names:
+
+        for curr_baseline_key in baseline_names:
+            curr_score_name = curr_base_score + "_" + curr_baseline_key + "_skill"
+            curr_baseline_mets = baselines[curr_baseline_key]
+            curr_baseline_score = curr_baseline_mets[curr_base_score]
+            curr_main_score = curr_main_mets[curr_base_score]
+
+            # Compute the skill scores for each set
+            curr_score_ratios = curr_main_score / curr_baseline_score 
+
+            #Add the skill scores to the return dictionaries
+            for i in range(num_sets):
+                curr_set_ratios = curr_score_ratios[i,]
+
+                #Compute geometric mean 
+                curr_set_gmean = gmean(curr_set_ratios)
+                curr_set_min = np.min(curr_set_ratios)
+                curr_set_max = np.max(curr_set_ratios)
+                summ_arr = np.array([curr_set_gmean, curr_set_min, curr_set_max])
+
+                curr_set_ratios = np.append(curr_set_ratios, summ_arr)
+                
+                to_ret[i][curr_score_name] = 1 - curr_set_ratios
+
+            #Compute the overall values across all sets 
+
+            curr_main_means = np.average(curr_main_score, axis=0, weights = weights)
+            curr_baseline_means = np.average(curr_baseline_score, axis=0, weights = weights)
+            curr_overall_ratios = curr_main_means / curr_baseline_means
+
+            curr_overall_gmean = gmean(curr_overall_ratios)
+            curr_overall_min = np.min(curr_overall_ratios)
+            curr_overall_max = np.max(curr_overall_ratios)
+            curr_overall_summ = np.array([curr_overall_gmean, curr_overall_min, curr_overall_max])
+
+            curr_overall_ratios = np.append(curr_overall_ratios, curr_overall_summ)
+
+            to_ret[-1][curr_score_name] = 1 - curr_overall_ratios
+
+    to_ret_dfs = [pd.DataFrame(curr_dict) for curr_dict in to_ret]
+    return to_ret_dfs
+
+
+
+
+weights = [len(curr_ts_list[0]) for curr_ts_list in targ]
+base_score_names = ["nat_mcrps", "log_mcrps"]
+
+curr_model_names = list(loc_mets_dict.keys())
+final_mets_dict = {}
+
+for curr_model_name in curr_model_names:
+    curr_loc_mets = loc_mets_dict[curr_model_name]
+    curr_main_mets = model_mets_dicts[curr_model_name]
+    curr_skill_scores = compute_skill_scores(curr_main_mets = curr_main_mets,
+                                            baselines = model_mets_dicts, 
+                                            base_score_names = base_score_names, 
+                                            weights = weights, 
+                                            curr_main_name = curr_model_name)
+
+    curr_final_mets = []
+    #Merge the skill scores into the current loc mets tables
+    for i in range(len(curr_loc_mets)):
+        temp = pd.concat([curr_loc_mets["Overall"][i], curr_skill_scores[i]], axis = 1)
+        curr_final_mets.append(temp)
+
+    final_mets_dict[curr_model_name] = curr_final_mets
+
+
+curr_sheet_names = ["Targ1", "Targ2", "Targ3", "TargOverall"]
+for curr_model_name in curr_model_names:
+    curr_output_dir = os.path.join(output_dir, curr_model_name)
+    os.makedirs(curr_output_dir, exist_ok=True)
+
+    curr_output_path = os.path.join(curr_output_dir, f"{curr_model_name}_Mets.xlsx")
+    nhp.df_list_to_excel(df_list = final_mets_dict[curr_model_name], 
+                        sheet_names = curr_sheet_names,
+                        path = curr_output_path)
+
+
 
 
 #%%
-#Generate some plots
-curr_ind = 1
-curr_input = hold[curr_ind]
-curr_test = targ[curr_ind]
-curr_preds = seas_avg_preds[curr_ind]
+# 5. Generating Visuals ---- 
+# obs_list_set_dict = {"nat": targ, "log": targ_log, "scaled": targ_log_s}
+# main_preds_set_dict = {"nat": main_preds, "log": main_preds, "scaled": main_preds_log_s}
 
-curr_ts_dict_list = nhp.create_ts_dict_list([curr_input, curr_test, curr_preds], ["Input", "Test", "Forecast"], uf_name_list)
 
-nhp.plot_dict_list(curr_ts_dict_list, low_quantile = 0.025, central_quantile = 0.5, high_quantile = 0.975, 
-                   width = 10, height = 18, curr_fig_dims = None, limit_dict = {"Input": 104})
+# lr_preds_set_dict = get_set_dict(lr_preds_dict)
+# proph_preds_set_dict = get_set_dict(proph_preds_dict)
+# seas_avg_preds_set_dict = get_set_dict(seas_avg_preds_dict)
+
+# lr_sens_preds_set_dict = get_set_dict(lr_sens_preds_dict)
+# proph_sens_preds_set_dict = get_set_dict(proph_sens_preds_dict)
+# seas_avg_sens_preds_set_dict = get_set_dict(seas_avg_sens_preds_dict)
+
+# tft_sens_preds_set_dict = get_set_dict(tft_sens_preds_dict)
+# tft_sens_preds_max_set_dict = get_set_dict(tft_sens_preds_max_dict)
+
+
+vis_key = "nat"
+model_preds_dict = {
+    "MainTFT": main_preds_set_dict,
+    "LR": lr_preds_set_dict,
+    "Prophet": proph_preds_set_dict,
+    "SeasAvg": seas_avg_preds_set_dict,
+    "LR_Sens": lr_sens_preds_set_dict,
+    "SeasAvg_Sens": seas_avg_sens_preds_set_dict,
+    "TFT_Sens": tft_sens_preds_set_dict,
+    "TFT_Sens_Max": tft_sens_preds_max_set_dict
+}
+input_set_dict = {"nat": hold, "log": hold_log_sc, "scaled": hold_log_sc_s}
+
+# For each model, we generate 2 kinds of visuals - one per individual target showing the input, test set and forecast 
+# One showing concatenated targets and forecasts
+# 
+
+## 5.1 Targ-specific Visuals ----
+curr_model_names = list(model_preds_dict.keys())
+num_sets = len(input_set_dict[vis_key])
+for curr_model_name in curr_model_names:
+    for curr_ind in range(num_sets):
+        curr_input = input_set_dict[vis_key][curr_ind]
+        curr_targ = obs_list_set_dict[vis_key][curr_ind]
+        curr_preds = model_preds_dict[curr_model_name][vis_key][curr_ind]
+
+        curr_ts_dict_list = nhp.create_ts_dict_list([curr_input, curr_targ, curr_preds], ["Input", "Test", "Forecast (95% UI)"], uf_name_list)
+
+        curr_fig, curr_ax = nhp.plot_dict_list(curr_ts_dict_list, low_quantile = 0.025, central_quantile = 0.5, high_quantile = 0.975, 
+                        width = 12, height = 16.97, curr_fig_dims = None, limit_dict = {"Input": 104})
+
+        curr_ax = curr_ax.flatten()
+        for ax in curr_ax:
+            ax.yaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))
+        handles, labels = curr_ax[0].get_legend_handles_labels()
+        curr_fig.legend(handles, labels, loc='lower left', bbox_to_anchor=(0.0, 1.0), ncol = 3, fontsize = 14)
+        for ax in curr_ax:
+            curr_leg = ax.get_legend()
+            if curr_leg is not None:
+                curr_leg.remove()
+
+        
+        curr_fig.delaxes(curr_ax[-2])
+        curr_fig.delaxes(curr_ax[-1])
+
+        curr_fig.tight_layout(pad=0.5)
+        curr_fig_name = f"{curr_model_name}_Targ{curr_ind}.png"
+        curr_output_path = os.path.join(output_dir, curr_model_name, curr_fig_name)
+        curr_fig.savefig(curr_output_path)
+
+
+#%%
+## 5.2 Overall Visuals ----
+curr_model_names = list(model_preds_dict.keys())
+vis_key = "nat"
+
+for curr_model_name in curr_model_names:
+    curr_input = input_set_dict[vis_key]
+    curr_targ = obs_list_set_dict[vis_key]
+    curr_preds = model_preds_dict[curr_model_name][vis_key]
+
+    line_dates = [curr_targ[1][0].start_time(), curr_targ[2][0].start_time()]
+    curr_targ_collapse = nhp.ts_list_set_collapse(curr_targ)
+    curr_preds_trunc = trunc_intersect(curr_targ, curr_preds)
+    curr_preds_trunc_collapse = nhp.ts_list_set_collapse(curr_preds_trunc)
+
+    curr_ts_dict_list = nhp.create_ts_dict_list([curr_targ_collapse, curr_preds_trunc_collapse], ["Test", "Forecast (95% UI)"], uf_name_list)
+    curr_fig, curr_ax  = nhp.plot_dict_list(curr_ts_dict_list, low_quantile = 0.025, central_quantile = 0.5, high_quantile = 0.975, 
+                    width = 12, height = 16.97, curr_fig_dims = None, limit_dict = {}, colour_dict = {"Test": "C1", "Forecast (95% UI)": "C2"})
+
+    curr_ax = curr_ax.flatten()
+
+    handles, labels = curr_ax[0].get_legend_handles_labels()
+    curr_fig.legend(handles, labels, loc='lower left', bbox_to_anchor=(0.0, 1.0), ncol = 3, fontsize = 14)
+    for ax in curr_ax:
+        curr_leg = ax.get_legend()
+        if curr_leg is not None:
+            curr_leg.remove()
+
+    for ax in curr_ax:
+        ax.yaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))
+
+    for ax in curr_ax:
+        ax.axvline(x=line_dates[0], color='gray', linestyle='--', linewidth=1)
+        ax.axvline(x=line_dates[1], color='gray', linestyle='--', linewidth=1)
+
+    curr_fig.delaxes(curr_ax[-2])
+    curr_fig.delaxes(curr_ax[-1])
+
+    curr_fig.tight_layout(pad=0.5)
+    curr_fig_name = f"{curr_model_name}_Overall.png"
+    curr_output_path = os.path.join(output_dir, curr_model_name, curr_fig_name)
+    curr_fig.savefig(curr_output_path)
+
 
