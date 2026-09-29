@@ -718,7 +718,7 @@ for curr_model_name in curr_model_names:
 
     curr_final_mets = []
     #Merge the skill scores into the current loc mets tables
-    for i in range(len(curr_loc_mets)):
+    for i in range(len(curr_loc_mets["Overall"])):
         temp = pd.concat([curr_loc_mets["Overall"][i], curr_skill_scores[i]], axis = 1)
         curr_final_mets.append(temp)
 
