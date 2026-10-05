@@ -466,7 +466,9 @@ def norm_metric(curr_obs, curr_preds, curr_normer = None, metric = None, norm_mo
         assert curr_obs.start_time() == curr_preds.start_time(), "Strict set to true, observed and predicted series must have the same start time"
         assert curr_obs.end_time() == curr_preds.end_time(), "Strict set to true, observed and predicted series must have the same end time"
     else:
+        #print(f"Strict mode is off: obs length {len(curr_obs)}, preds length {len(curr_preds)} before slicing")
         curr_preds = curr_preds.slice_intersect(curr_obs) #If strict is false, then take the intersection of observed and predicted for eval
+        #print(f"Strict mode is off: obs length {len(curr_obs)}, preds length {len(curr_preds)} after slicing")
     
     #metric is a string we have to get the function
     if isinstance(metric, str):
