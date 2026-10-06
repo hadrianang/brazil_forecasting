@@ -60,6 +60,8 @@ model_input_dir = os.path.join(base_dir, "ModelInput_Round2")
 output_dir = os.path.join(base_dir, "ClimEvalRes", tuning_name, model_name)
 plots_output_dir = os.path.join(output_dir, "Plots")
 
+bl_dir = os.path.join(base_dir, "ClimBaselines")
+
 os.makedirs(plots_output_dir, exist_ok = True)
 os.makedirs(output_dir, exist_ok = True)
 
@@ -279,7 +281,7 @@ else:
 
 
 #%%
-## 3.3 Building list sets ----
+## 3.3 Building list sets and loading baselines ----
 #Building ts list sets 
 #To simplify evaluation, we group lists of series together into sets 
 # We can also change the naming scheme here to those in the data split slides

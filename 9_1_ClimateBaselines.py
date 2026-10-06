@@ -61,11 +61,7 @@ base_dir = os.getcwd()
 
 climate_tuning_dir = os.path.join(base_dir, "Climate Tuning", "Notebook_24_07_2025")
 model_input_dir = os.path.join(base_dir, "ModelInput_Round2")
-output_dir = os.path.join(base_dir, "ClimEvalRes", tuning_name, model_name)
-plots_output_dir = os.path.join(output_dir, "Plots")
-
-os.makedirs(plots_output_dir, exist_ok = True)
-os.makedirs(output_dir, exist_ok = True)
+output_dir = os.path.join(base_dir, "ClimBaselines")
 
 fc_dir = os.path.join(base_dir, set_name, tuning_name, model_name, "Forecasts")
 fc_rd2_dir = os.path.join(base_dir, set_name, tuning_name, model_name, "Forecasts_Round2")
@@ -88,6 +84,7 @@ use_orig_normer = True #Use the original clim_train1 series (same as tuning) for
 multi_model_predict = True
 
 weekly_cal = pd.read_csv(os.path.join(model_input_dir, "Calendar.csv"))
+ext_weekly_cal = pd.read_csv(os.path.join(model_input_dir, "CalendarExt.csv"))
 climate_df = pd.read_csv(os.path.join(model_input_dir, "TimeVaryingCovs.csv"))
 
 #Remove uf = "ES" since there is no dengue data for Espirito Santo
@@ -313,3 +310,99 @@ den_gap_val_preds = [eval_dict["clim_preds_1"], eval_dict["clim_preds_2"], eval_
 
 den_gap_targ = nhp.ts_list_set_concatenate([den_targ_gap, den_targ])
 den_gap_targ_preds = [eval_dict["clim_preds_targ1"], eval_dict["clim_preds_targ2"], eval_dict["clim_preds_targ3"]]
+
+
+#%%
+# 4. Baseline Models ----
+## 4.1 Naive Seasonal Average Class ----
+# We define a class with similar fit and predict interfaces as the Darts models, but with some requirements in the constructor
+class NaiveSeasonalAverage:
+    def __init__(self, calendar, comp_names, date_name = "WeekStart"): 
+        self.calendar = calendar.copy() 
+        self.date_name = date_name
+        #Assumes dayfirst date format in the weekly calendar
+        self.calendar[self.date_name] = pd.to_datetime(self.calendar[self.date_name], format = "%d/%m/%Y")
+        self.comp_names = comp_names
+        self.weekly_avg_list = []
+
+
+    def fit(self, series):
+        #Build a list of DataFrames containing the average per week for each series in the list
+        #This then assumes that the input admin units are in the same order as during training 
+        series_list = series
+        self.weekly_avg_list = [] 
+        for curr_train_ts in series_list:
+
+            curr_train_ts_df = curr_train_ts.to_dataframe().reset_index()
+
+            week_label = self.calendar[[self.date_name, "Week"]]
+
+            #Add the week numbers to each time point
+            curr_train_ts_df = curr_train_ts_df.merge(week_label, how = "left", on = self.date_name)
+
+            #Compute the average per week number 
+            curr_train_ts_df = curr_train_ts_df.drop(columns = [self.date_name])
+            curr_weekly_avg = curr_train_ts_df.groupby("Week").mean(numeric_only=True).reset_index()
+
+            #Remove the value for Week 53 and replace it with the value for Week 52
+            curr_weekly_avg = curr_weekly_avg[curr_weekly_avg["Week"] != 53]
+            week53 = curr_weekly_avg[curr_weekly_avg["Week"] == 52].copy()
+            week53["Week"] = 53
+            curr_weekly_avg = pd.concat([curr_weekly_avg, week53], ignore_index=True).sort_values("Week")
+            
+            self.weekly_avg_list.append(curr_weekly_avg)
+
+    def predict(self, series, n):
+        forecast_result = []
+        for curr_ind in range(len(series)):
+            curr_input_ts = series[curr_ind]
+            curr_weekly_avg = self.weekly_avg_list[curr_ind]
+
+            input_end = curr_input_ts.end_time()
+            start_index = self.calendar[self.calendar[self.date_name] == input_end].index.tolist()
+            idx = start_index[0]
+            predict_period = self.calendar.iloc[idx + 1 : idx + 1 + n]
+
+
+            forecast_df = predict_period.merge(curr_weekly_avg, how = "left", on = "Week").set_index(self.date_name)
+            forecast_ts = TimeSeries.from_times_and_values(times = forecast_df.index, values = forecast_df[self.comp_names], columns = self.comp_names)
+
+            forecast_result.append(forecast_ts)
+        return forecast_result
+
+
+
+# %%
+#We make an averager for each ts series list in each set from DenTuneTrain, DenTrain, and DenHold
+#then we use the same training sets as input sequences to generate forecasts of length 68 - same as the main forecasts
+#Note we use unscaled versions of all the data for this (averaging occurs with the same magnitude as the original variables)
+
+den_tune_train_models = [NaiveSeasonalAverage(calendar = ext_weekly_cal, comp_names = clim_var_names) for curr in den_tune_train] 
+den_train_models = [NaiveSeasonalAverage(calendar = ext_weekly_cal, comp_names = clim_var_names) for curr in den_train] 
+den_hold_models = [NaiveSeasonalAverage(calendar = ext_weekly_cal, comp_names = clim_var_names) for curr in den_hold] 
+
+
+#Fit all the models
+for model, ts_list in zip(den_tune_train_models, den_tune_train):
+    model.fit(ts_list)
+
+for model, ts_list in zip(den_train_models, den_train):
+    model.fit(ts_list)
+
+for model, ts_list in zip(den_hold_models, den_hold):
+    model.fit(ts_list)
+
+forecast_length = 68
+
+den_tune_gap_val_preds = [model.predict(ts_list, forecast_length) for model, ts_list in zip(den_tune_train_models, den_tune_train)]
+den_gap_val_preds = [model.predict(ts_list, forecast_length) for model, ts_list in zip(den_train_models, den_train)]
+den_gap_targ_preds = [model.predict(ts_list, forecast_length) for model, ts_list in zip(den_hold_models, den_hold)]
+
+#Save the forecast results for later use through a dictionary
+forecast_dict = {
+    "den_tune_gap_val_preds": den_tune_gap_val_preds,
+    "den_gap_val_preds": den_gap_val_preds,
+    "den_gap_targ_preds": den_gap_targ_preds
+}
+#Pickle
+nhp.save_pickle(forecast_dict, "seasonal_average.pkl")
