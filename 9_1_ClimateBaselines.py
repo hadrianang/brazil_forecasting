@@ -405,4 +405,4 @@ forecast_dict = {
     "den_gap_targ_preds": den_gap_targ_preds
 }
 #Pickle
-nhp.save_pickle(forecast_dict, "seasonal_average.pkl")
+nhp.save_pickle(forecast_dict, os.path.join(output_dir, "seasonal_average.pkl"))

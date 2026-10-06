@@ -312,6 +312,10 @@ den_gap_val_preds = [eval_dict["clim_preds_1"], eval_dict["clim_preds_2"], eval_
 den_gap_targ = nhp.ts_list_set_concatenate([den_targ_gap, den_targ])
 den_gap_targ_preds = [eval_dict["clim_preds_targ1"], eval_dict["clim_preds_targ2"], eval_dict["clim_preds_targ3"]]
 
+seasonal_avg_dict = nhp.load_pickle(os.path.join(bl_dir, "seasonal_average.pkl"))
+
+
+
 #%%
 ## 3.4 Computing Metrics ----
 #Computing metrics - MASE, Nat MAE, MIN-MAX MAE
@@ -327,13 +331,53 @@ den_tune_gap_val_mets = nhp.collect_set_metrics({"nat":den_tune_gap_val}, {"nat"
 den_gap_val_mets = nhp.collect_set_metrics({"nat":den_gap_val}, {"nat":den_gap_val_preds}, normer_list = normer, meta_metrics = meta_metrics, meta_norms = meta_norms, extras = extras, strict = False)
 den_gap_targ_mets = nhp.collect_set_metrics({"nat":den_gap_targ}, {"nat":den_gap_targ_preds}, normer_list = normer, meta_metrics = meta_metrics, meta_norms = meta_norms, extras = extras, strict = False)
 
+
+bl_den_tune_gap_val_preds = seasonal_avg_dict["den_tune_gap_val_preds"]
+bl_den_gap_val_preds = seasonal_avg_dict["den_gap_val_preds"]
+bl_den_gap_targ_preds = seasonal_avg_dict["den_gap_targ_preds"]
+
+bl_den_tune_gap_val_mets = nhp.collect_set_metrics({"nat":den_tune_gap_val}, {"nat":bl_den_tune_gap_val_preds}, normer_list = normer, meta_metrics = meta_metrics, meta_norms = meta_norms, extras = extras, strict = False)
+bl_den_gap_val_mets = nhp.collect_set_metrics({"nat":den_gap_val}, {"nat":bl_den_gap_val_preds}, normer_list = normer, meta_metrics = meta_metrics, meta_norms = meta_norms, extras = extras, strict = False)
+bl_den_gap_targ_mets = nhp.collect_set_metrics({"nat":den_gap_targ}, {"nat":bl_den_gap_targ_preds}, normer_list = normer, meta_metrics = meta_metrics, meta_norms = meta_norms, extras = extras, strict = False)
+
+
+
 #%%
 ### 3.4.1 Loc x Mets Table ----
 den_tune_gap_val_loc_mets = nhp.get_loc_mets_tables(den_tune_gap_val_mets, curr_eval_dict = {"obs": {"nat": den_tune_gap_val}}, admin_list = uf_name_list, admin_level_list = admin_level_list, clim_var_names = clim_var_names)
 den_gap_val_loc_mets = nhp.get_loc_mets_tables(den_gap_val_mets, curr_eval_dict = {"obs": {"nat": den_gap_val}}, admin_list = uf_name_list, admin_level_list = admin_level_list, clim_var_names = clim_var_names)
 den_gap_targ_loc_mets = nhp.get_loc_mets_tables(den_gap_targ_mets, curr_eval_dict = {"obs": {"nat": den_gap_targ}}, admin_list = uf_name_list, admin_level_list = admin_level_list, clim_var_names = clim_var_names)
 
+bl_den_tune_gap_val_loc_mets = nhp.get_loc_mets_tables(bl_den_tune_gap_val_mets, curr_eval_dict = {"obs": {"nat": den_tune_gap_val}}, admin_list = uf_name_list, admin_level_list = admin_level_list, clim_var_names = clim_var_names)
+bl_den_gap_val_loc_mets = nhp.get_loc_mets_tables(bl_den_gap_val_mets, curr_eval_dict = {"obs": {"nat": den_gap_val}}, admin_list = uf_name_list, admin_level_list = admin_level_list, clim_var_names = clim_var_names)
+bl_den_gap_targ_loc_mets = nhp.get_loc_mets_tables(bl_den_gap_targ_mets, curr_eval_dict = {"obs": {"nat": den_gap_targ}}, admin_list = uf_name_list, admin_level_list = admin_level_list, clim_var_names = clim_var_names)
 
+# #Add skill scores to each loc_mets table to help contextualise results - note this is per component
+# curr_main = den_tune_gap_val_mets
+# curr_bl = bl_den_tune_gap_val_mets
+# comp_names = clim_var_names + ["Overall"]
+# admin_list = uf_name_list
+
+# ret_dict = {}
+# # Goal here is return a dict where the values are lists of dataframes of length curr_main + 1, one for each ts_list (e.g. DenVal1) + an overall summary
+# # The keys should be the component names + "Overall" for easy merging into the loc_mets tables
+# # In each dataframe with have an admin column + a column for each skill score which is computed as 1 - ratio
+
+# #We compute skill scores for each metric
+# met_keys = list(curr_main.keys())
+# curr_met_key = met_keys[0]
+
+# curr_main_mets = curr_main[curr_met_key]
+# curr_bl_mets = curr_bl[curr_met_key]
+
+# #Ratios give per set, per admin, per component skill scores
+# #
+# curr_comp = comp_names[0]
+
+# curr_ratios = curr_main_mets / curr_bl_mets
+
+
+#%%
 #Compile all the Loc x mets tables for outputting into Excel files
 #Each one has keys based on the component name + Overall
 comp_key_list = clim_var_names + ["Overall"]
@@ -348,11 +392,20 @@ for comp_key in comp_key_list:
     den_tune_gap_val_sheets = den_tune_gap_val_loc_mets[comp_key]
     den_gap_val_sheets = den_gap_val_loc_mets[comp_key]
     den_gap_targ_sheets = den_gap_targ_loc_mets[comp_key]
+
+
+    bl_den_tune_gap_val_sheets = bl_den_tune_gap_val_loc_mets[comp_key]
+    bl_den_gap_val_sheets = bl_den_gap_val_loc_mets[comp_key]
+    bl_den_gap_targ_sheets = bl_den_gap_targ_loc_mets[comp_key]
+    bl_df_output_list = bl_den_tune_gap_val_sheets + bl_den_gap_val_sheets + bl_den_gap_targ_sheets
     df_output_list = den_tune_gap_val_sheets + den_gap_val_sheets + den_gap_targ_sheets
 
     #Output to an Excel file 
     output_path = os.path.join(output_dir, comp_key + "_LocMets.xlsx")
     nhp.df_list_to_excel(df_output_list, output_path, sheet_names = sheet_names)
+
+    bl_output_path = os.path.join(output_dir, "BL_" + comp_key + "_LocMets.xlsx")
+    nhp.df_list_to_excel(bl_df_output_list, bl_output_path, sheet_names = sheet_names)
 
 #%%
 ### 3.4.2 Comps x Mets Table ----
@@ -404,14 +457,21 @@ den_tune_gap_val_comps_mets = get_comps_mets_tables(curr_metric_dict = den_tune_
 den_gap_val_comps_mets = get_comps_mets_tables(curr_metric_dict = den_gap_val_mets, curr_eval_dict = {"obs": {"nat": den_gap_val}}, comp_names = clim_var_names, fold_weighted = True)
 den_gap_targ_comps_mets = get_comps_mets_tables(curr_metric_dict = den_gap_targ_mets, curr_eval_dict = {"obs": {"nat": den_gap_targ}}, comp_names = clim_var_names, fold_weighted = True)
 
+bl_den_tune_gap_val_comps_mets = get_comps_mets_tables(curr_metric_dict = bl_den_tune_gap_val_mets, curr_eval_dict = {"obs": {"nat": den_tune_gap_val}}, comp_names = clim_var_names, fold_weighted = True)
+bl_den_gap_val_comps_mets = get_comps_mets_tables(curr_metric_dict = bl_den_gap_val_mets, curr_eval_dict = {"obs": {"nat": den_gap_val}}, comp_names = clim_var_names, fold_weighted = True)
+bl_den_gap_targ_comps_mets = get_comps_mets_tables(curr_metric_dict = bl_den_gap_targ_mets, curr_eval_dict = {"obs": {"nat": den_gap_targ}}, comp_names = clim_var_names, fold_weighted = True)
+
 #Output to Excel using the sheet names already built
 comp_mets_df_list = den_tune_gap_val_comps_mets + den_gap_val_comps_mets + den_gap_targ_comps_mets
 nhp.df_list_to_excel(comp_mets_df_list, os.path.join(output_dir, "CompMets.xlsx"), sheet_names = sheet_names)
 
+bl_comp_mets_df_list = bl_den_tune_gap_val_comps_mets + bl_den_gap_val_comps_mets + bl_den_gap_targ_comps_mets
+nhp.df_list_to_excel(bl_comp_mets_df_list, os.path.join(output_dir, "BL_CompMets.xlsx"), sheet_names = sheet_names)
 #%%
 #Creating plots 
 # 4. Creating Plots ----
 
+## 4.1 Per Set Plots
 #Generate a plot for every validation and test set we generate climate forecasts over
 #We cannot generate summary plots since some forecasts intersect when gaps are included (e.g.: gap before DenTuneVal2 intersects with DenTuneVal1)
 select_admin = uf_name_list[:5]
@@ -471,3 +531,10 @@ for curr_ind in range(len(input_sets)):
     output_path = os.path.join(plots_output_dir, "ClimFC_" + plot_names[curr_ind] + ".png")  # Specify the desired output path
     curr_fig.savefig(output_path, dpi=300)
 
+# %%
+## 4.2 Summary Plots
+den_tune_val_concat = nhp.ts_list_concatenate([den_tune_gap_val[0], den_tune_val[1], den_tune_gap_val[2]])
+den_val_concat = nhp.ts_list_concatenate([den_gap_val[0], den_val[1], den_gap_val[2]])
+den_targ_concat = nhp.ts_list_concatenate([den_gap_targ[0] + den_targ[1] + den_gap_targ[2]])
+
+# %%
