@@ -470,7 +470,14 @@ nhp.df_list_to_excel(bl_comp_mets_df_list, os.path.join(output_dir, "BL_CompMets
 #%%
 #Creating plots 
 # 4. Creating Plots ----
-
+#Flatten across components 
+def component_flatten(ts_list):
+    to_ret = []
+    comp_names = ts_list[0].components
+    for curr_comp in comp_names:
+        curr_comp_ts_list = [curr_ts[curr_comp] for curr_ts in ts_list]
+        to_ret += curr_comp_ts_list
+    return to_ret
 ## 4.1 Per Set Plots
 #Generate a plot for every validation and test set we generate climate forecasts over
 #We cannot generate summary plots since some forecasts intersect when gaps are included (e.g.: gap before DenTuneVal2 intersects with DenTuneVal1)
@@ -490,14 +497,7 @@ for curr_ind in range(len(input_sets)):
     curr_test_filt = [curr_test[i] for i in get_inds]
     curr_pred_filt = [curr_pred[i] for i in get_inds]
 
-    #Flatten across components 
-    def component_flatten(ts_list):
-        to_ret = []
-        comp_names = ts_list[0].components
-        for curr_comp in comp_names:
-            curr_comp_ts_list = [curr_ts[curr_comp] for curr_ts in ts_list]
-            to_ret += curr_comp_ts_list
-        return to_ret
+
 
     curr_input_filt_flat = component_flatten(curr_input_filt)
     curr_test_filt_flat = component_flatten(curr_test_filt)
@@ -505,10 +505,10 @@ for curr_ind in range(len(input_sets)):
 
     num_comps = len(curr_input_filt[0].components)
 
-    clim_var_disp_names = ["Min. Temp.", "Med. Temp.", "Max. Temp.", 
-                        "Min. Precip.", "Med. Precip.", "Max. Precip.",
-                        "Min. Pressure", "Med. Pressure", "Max. Pressure",
-                        "Min. Rel. Hum.", "Med. Rel. Hum.", "Max. Rel. Hum."]
+    clim_var_disp_names = ["Min. Temp.", "Mean Temp.", "Max. Temp.", 
+                        "Min. Precip.", "Mean Precip.", "Max. Precip.",
+                        "Min. Pressure", "Mean Pressure", "Max. Pressure",
+                        "Min. Rel. Hum.", "Mean Rel. Hum.", "Max. Rel. Hum."]
     curr_vis_dict = nhp.create_ts_dict_list(ts_lists = [curr_input_filt_flat, curr_test_filt_flat, curr_pred_filt_flat], 
                                             ts_names = ["Input", "Test", "Forecast"], unit_names = select_admin * num_comps)
 
@@ -529,12 +529,93 @@ for curr_ind in range(len(input_sets)):
 
     curr_fig.tight_layout(pad=0.5)
     output_path = os.path.join(plots_output_dir, "ClimFC_" + plot_names[curr_ind] + ".png")  # Specify the desired output path
-    curr_fig.savefig(output_path, dpi=300)
+    curr_fig.savefig(output_path, dpi=300, bbox_inches='tight')
 
 # %%
 ## 4.2 Summary Plots
-den_tune_val_concat = nhp.ts_list_concatenate([den_tune_gap_val[0], den_tune_val[1], den_tune_gap_val[2]])
-den_val_concat = nhp.ts_list_concatenate([den_gap_val[0], den_val[1], den_gap_val[2]])
-den_targ_concat = nhp.ts_list_concatenate([den_gap_targ[0] + den_targ[1] + den_gap_targ[2]])
+den_tune_val_concat = nhp.ts_list_concatenate([den_tune_gap_val[0], den_tune_val[1], den_tune_val[2]])
+den_val_concat = nhp.ts_list_concatenate([den_gap_val[0], den_val[1], den_val[2]])
+den_targ_concat = nhp.ts_list_concatenate([den_gap_targ[0], den_targ[1], den_targ[2]])
 
+#Now we can make summary plots for tune_val, val, and targ
+
+obs_sets = [den_tune_val_concat, den_val_concat, den_targ_concat]
+preds_sets = [den_tune_gap_val_preds, den_gap_val_preds, den_gap_targ_preds]
+bl_pred_sets = [bl_den_tune_gap_val_preds, bl_den_gap_val_preds, bl_den_gap_targ_preds]
+get_inds = [uf_name_list.index(admin) for admin in select_admin]
+summ_plot_names = set_names
+
+for curr_ind in range(len(obs_sets)):
+    curr_obs = obs_sets[curr_ind]
+    curr_preds_lists = preds_sets[curr_ind]
+    curr_bl_preds_lists = bl_pred_sets[curr_ind]
+
+    curr_ts_list = [curr_obs] + curr_preds_lists
+    curr_ts_list_filt = []
+    for i in range(len(curr_ts_list)):
+        curr_ts_list_filt.append([curr_ts_list[i][j] for j in get_inds])
+
+    curr_ts_list_filt_flat = []
+    for i in range(len(curr_ts_list_filt)):
+        curr_ts_list_filt_flat.append(component_flatten(curr_ts_list_filt[i]))
+    curr_ts_names = ["Observed"] + ["Forecast " + str(i+1) for i in range(len(curr_preds_lists))]
+    num_comps = len(curr_obs[0].components)
+
+    clim_var_disp_names = ["Min. Temp.", "Med. Temp.", "Max. Temp.", 
+                        "Min. Precip.", "Med. Precip.", "Max. Precip.",
+                        "Min. Pressure", "Med. Pressure", "Max. Pressure",
+                        "Min. Rel. Hum.", "Med. Rel. Hum.", "Max. Rel. Hum."]
+    curr_vis_dict = nhp.create_ts_dict_list(ts_lists = curr_ts_list_filt_flat, 
+                                            ts_names = curr_ts_names, unit_names = select_admin * num_comps)
+
+
+    curr_fig, curr_ax = nhp.plot_dict_list(curr_vis_dict, low_quantile = 0.025, central_quantile = 0.5, high_quantile = 0.975, 
+                    width = 16, height = 23, curr_fig_dims = (12,5), colour_dict = {"Observed": "darkgrey"})
+
+    for ax, disp_name in zip(curr_ax[:,0], clim_var_disp_names):
+        ax.set_ylabel(disp_name, fontsize = 14)
+
+    curr_ax = curr_ax.flatten()
+    handles, labels = curr_ax[0].get_legend_handles_labels()
+    curr_fig.legend(handles, labels, loc='lower left', bbox_to_anchor=(0.0, 1.0), ncol = 4, fontsize = 14)
+    for ax in curr_ax:
+        curr_leg = ax.get_legend()
+        if curr_leg is not None:
+            curr_leg.remove()
+
+    curr_fig.tight_layout(pad=0.5)
+    output_path = os.path.join(plots_output_dir, "Overall_ClimFC_" + summ_plot_names[curr_ind] + ".png")  # Specify the desired output path
+    curr_fig.savefig(output_path, dpi=300, bbox_inches='tight')
+
+    #Do the same plot but for baseline
+    bl_curr_ts_list = [curr_obs] + curr_bl_preds_lists
+    bl_curr_ts_list_filt = []
+    for i in range(len(bl_curr_ts_list)):
+        bl_curr_ts_list_filt.append([bl_curr_ts_list[i][j] for j in get_inds])
+
+    bl_curr_ts_list_filt_flat = []
+    for i in range(len(bl_curr_ts_list_filt)):
+        bl_curr_ts_list_filt_flat.append(component_flatten(bl_curr_ts_list_filt[i]))
+
+    bl_curr_vis_dict = nhp.create_ts_dict_list(ts_lists = bl_curr_ts_list_filt_flat, 
+                                            ts_names = curr_ts_names, unit_names = select_admin * num_comps)
+
+
+    bl_curr_fig, bl_curr_ax = nhp.plot_dict_list(bl_curr_vis_dict, low_quantile = 0.025, central_quantile = 0.5, high_quantile = 0.975, 
+                    width = 16, height = 23, curr_fig_dims = (12,5), colour_dict = {"Observed": "darkgrey"})
+
+    for ax, disp_name in zip(bl_curr_ax[:,0], clim_var_disp_names):
+        ax.set_ylabel(disp_name, fontsize = 14)
+
+    bl_curr_ax = bl_curr_ax.flatten()
+    bl_handles, bl_labels = bl_curr_ax[0].get_legend_handles_labels()
+    bl_curr_fig.legend(bl_handles, bl_labels, loc='lower left', bbox_to_anchor=(0.0, 1.0), ncol = 4, fontsize = 14)
+    for ax in bl_curr_ax:
+        curr_leg = ax.get_legend()
+        if curr_leg is not None:
+            curr_leg.remove()
+
+    bl_curr_fig.tight_layout(pad=0.5)
+    bl_output_path = os.path.join(plots_output_dir, "BL_Overall_ClimFC_" + summ_plot_names[curr_ind] + ".png")  # Specify the desired output path
+    bl_curr_fig.savefig(bl_output_path, dpi=300, bbox_inches='tight')
 # %%
