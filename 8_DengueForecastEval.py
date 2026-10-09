@@ -567,8 +567,8 @@ lr_sens_mets = nhp.collect_set_metrics(obs_list_set_dict, lr_sens_preds_set_dict
 # proph_sens_mets = nhp.collect_set_metrics(obs_list_set_dict, proph_sens_preds_set_dict, normer_list = normer_list, meta_metrics = meta_metrics_det, meta_norms = meta_norms, extras = extras, strict = False)
 seas_avg_sens_mets = nhp.collect_set_metrics(obs_list_set_dict, seas_avg_sens_preds_set_dict, normer_list = normer_list, meta_metrics = meta_metrics_det, meta_norms = meta_norms, extras = extras, strict = False)
 
-tft_sens_mets = nhp.collect_set_metrics(obs_list_set_dict, tft_sens_preds_set_dict, normer_list = normer_list, meta_metrics = meta_metrics_det, meta_norms = meta_norms, extras = extras, strict = False)
-tft_sens_max_mets = nhp.collect_set_metrics(obs_list_set_dict, tft_sens_preds_max_set_dict, normer_list = normer_list, meta_metrics = meta_metrics_det, meta_norms = meta_norms, extras = extras, strict = False)
+tft_sens_mets = nhp.collect_set_metrics(obs_list_set_dict, tft_sens_preds_set_dict, normer_list = normer_list, meta_metrics = meta_metrics, meta_norms = meta_norms, extras = extras, strict = False)
+tft_sens_max_mets = nhp.collect_set_metrics(obs_list_set_dict, tft_sens_preds_max_set_dict, normer_list = normer_list, meta_metrics = meta_metrics, meta_norms = meta_norms, extras = extras, strict = False)
 
 #%% Compute the MCRPSS versus each baseline model
 model_mets_dicts = {
@@ -804,7 +804,7 @@ for curr_model_name in curr_model_names:
         curr_fig.tight_layout(pad=0.5)
         curr_fig_name = f"{curr_model_name}_Targ{curr_ind}.png"
         curr_output_path = os.path.join(output_dir, curr_model_name, curr_fig_name)
-        curr_fig.savefig(curr_output_path)
+        curr_fig.savefig(curr_output_path, bbox_inches='tight', dpi=300)
 
 
 #%%
@@ -848,6 +848,6 @@ for curr_model_name in curr_model_names:
     curr_fig.tight_layout(pad=0.5)
     curr_fig_name = f"{curr_model_name}_Overall.png"
     curr_output_path = os.path.join(output_dir, curr_model_name, curr_fig_name)
-    curr_fig.savefig(curr_output_path)
+    curr_fig.savefig(curr_output_path, bbox_inches='tight', dpi=300)
 
 
